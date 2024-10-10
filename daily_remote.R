@@ -48,8 +48,8 @@ make_unique_bidprice <- function(data) {
 
 
 # Replace with the path to your client secrets JSON file
-CLIENT_SECRETS_FILE <- "F:/google_auth.json"
-bq_auth(path = "F:/google_auth.json")
+# CLIENT_SECRETS_FILE <- "F:/google_auth.json"
+# bq_auth(path = "F:/google_auth.json")
 
 # Set your project ID
 project_id <- "iso-data-437618"
@@ -119,7 +119,84 @@ spp_rfrz_data <- bq_table_download(result)
 
 
 
+# Construct a SQL query
+sql <- sprintf("
+
+SELECT * 
+FROM `spp.load_ba` 
+WHERE DATE(pricedate) <= CURRENT_DATE() + 1
+ORDER BY pricedate DESC, hour
+               
+               "
+)
+
+# Run the query
+result <- bq_project_query(project_id, sql)
+
+# Download the query results into a data frame
+spp_load_ba_data <- bq_table_download(result) 
+
+
+spp_fund_data <- left_join(spp_mtlf_data %>% dplyr::select(pricedate, hour, load_forecast, Averaged_Actual), spp_load_ba_data, by = c("pricedate", "hour")) %>%
+  #left_join(., spp_load_gen_data %>% dplyr::select(-c(central_time, GMT_TIME)), by = c("pricedate", "hour")) %>% 
+  left_join(., spp_mtrf_data %>% dplyr::select(pricedate, hour, wind_forecast, solar_forecast), by = c("pricedate", "hour")) %>%
+  left_join(., spp_rfrz_data %>% dplyr::select(-c(IntervalEnd, as_of)), by = c("pricedate", "hour")) %>%
+  mutate(net_demand_forecast = load_forecast - wind_forecast - solar_forecast) %>%
+  dplyr::select(pricedate, hour, load_forecast, wind_forecast, solar_forecast, net_demand_forecast, everything()) %>% 
+  #dplyr::rename(gmt_pricedate = gmt_pricedate.x, gmt_hour = gmt_hour.x) %>%
+  filter(pricedate <= current_date + 1)
+
+
+spp_fcast_data <- spp_fund_data %>% dplyr::select(pricedate, hour, load_forecast, wind_forecast, solar_forecast, net_demand_forecast) %>%
+  left_join(., spp_rfrz_data %>% dplyr::select(pricedate, hour, 
+                                               reserve_zone_1_wind_forecast, reserve_zone_1_solar_forecast,
+                                               reserve_zone_2_wind_forecast, reserve_zone_2_solar_forecast,
+                                               reserve_zone_3_wind_forecast, reserve_zone_3_solar_forecast,
+                                               reserve_zone_4_wind_forecast, reserve_zone_4_solar_forecast,
+                                               reserve_zone_5_wind_forecast, reserve_zone_5_solar_forecast,
+  ), by = c("pricedate", "hour"))
+
+spp_wind_fcast_data <- spp_fund_data %>% dplyr::select(pricedate, hour, load_forecast, wind_forecast, net_demand_forecast) %>%
+  left_join(., spp_rfrz_data %>% dplyr::select(pricedate, hour,
+                                               reserve_zone_1_wind_forecast, 
+                                               reserve_zone_2_wind_forecast,
+                                               reserve_zone_3_wind_forecast, 
+                                               reserve_zone_4_wind_forecast, 
+                                               reserve_zone_5_wind_forecast,
+  ), by = c("pricedate", "hour"))
+
+
+spp_fcast_tomorrow <- spp_fcast_data %>% filter(pricedate == current_date + 1)
+spp_wind_fcast_tomorrow <- spp_wind_fcast_data %>% filter(pricedate == current_date + 1)
+
+View(spp_fcast_data)
+
 #### end SPP Fundamental Data ####
+
+
+#### SPP node and price data ####
+
+# Construct a SQL query
+sql <- sprintf("
+
+SELECT * 
+FROM spp.prices
+WHERE DATE(pricedate) >= CURRENT_DATE() - 220
+AND node = 'SPC'
+ORDER BY pricedate DESC, hour ASC, node
+               
+               "
+)
+
+# Run the query
+result <- bq_project_query(project_id, sql)
+
+# Download the query results into a data frame
+spp_prices_data <- bq_table_download(result) %>% mutate_if(is.numeric, round, digits = 2)
+
+View(spp_prices_data)
+
+#### end SPP price and node data
 
 
 #### CISO Fundamental Data ####
